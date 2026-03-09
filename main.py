@@ -6,7 +6,7 @@ from email.mime.text import MIMEText
 
 # --- KONFIGURACJA ---
 # Tutaj wpisz spółki, które Cię interesują (WIELKIMI LITERAMI)
-OBSERWOWANE = ["KGHM", "CD PROJEKT", "SYNEKTIK", "ORLEN","BACTEROMIC"]
+OBSERWOWANE = ["KGHM", "CD PROJEKT", "SYNEKTIK", "ORLEN"]
 URL_ZRODLO = "https://www.bankier.pl/gielda/wiadomosci/komunikaty-espi-ebi"
 
 # Dane pobierane z "Secrets" GitHuba dla bezpieczeństwa
