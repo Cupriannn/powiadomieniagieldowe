@@ -6,42 +6,49 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 # --- KONFIGURACJA ---
-OBSERWOWANE = ["KGHM", "CD PROJEKT", "SYNEKTIK", "ORLEN"]
+OBSERWOWANE = ["KGHM", "CD PROJEKT", "SYNEKTIK", "ORLEN", "BUDIMEX"]
 URL_ZRODLO = "https://www.bankier.pl/gielda/wiadomosci/wiadomosci-ze-spolek"
 BASE_URL = "https://www.bankier.pl"
 
 EMAIL_USER = os.environ.get('EMAIL_USER')
 EMAIL_PASS = os.environ.get('EMAIL_PASS')
 
-def wyslij_mail(spolka, tytul, link_raportu):
-    msg = MIMEMultipart('alternative')
-    msg['Subject'] = f"🔔 ALERT GPW: {spolka}"
-    msg['From'] = f"Monitor Giełdowy <{EMAIL_USER}>"
-    msg['To'] = EMAIL_USER
-
-    # Budujemy HTML w sposób, który nie "psuje" kolorowania składni w edytorze
-    html_template = """
-    <html>
-    <body style="font-family: Arial, sans-serif; color: #333;">
-        <div style="max-width: 600px; margin: 20px auto; border: 1px solid #ddd; border-radius: 8px; overflow: hidden;">
-            <div style="background-color: #1a73e8; color: white; padding: 20px; text-align: center;">
-                <h2 style="margin: 0;">Nowa wiadomość: {spolka}</h2>
-            </div>
-            <div style="padding: 25px; background-color: #ffffff;">
-                <p style="font-size: 16px; font-weight: bold; color: #000;">{tytul}</p>
-                <div style="text-align: center; margin-top: 25px;">
-                    <a href="{link}" style="background-color: #1a73e8; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">
-                        PRZECZYTAJ ARTYKUŁ
+# Szablon HTML (Zdefiniowany jako zwykły tekst, aby nie psuć kolorowania)
+HTML_TEMPLATE = """
+<html>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f5f5f7; color: #1d1d1f; margin: 0; padding: 0;">
+    <div style="width: 100%; padding: 40px 0;">
+        <div style="max-width: 500px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
+            <div style="padding: 40px;">
+                <p style="font-size: 14px; font-weight: 500; color: #06c; margin-bottom: 8px;">Monitor Giełdowy | Powiadomienie</p>
+                <h2 style="font-size: 24px; font-weight: 700; color: #1d1d1f; margin-top: 0; margin-bottom: 24px; line-height: 1.2;">{{spolka}}</h2>
+                <p style="font-size: 16px; color: #515154; line-height: 1.6; margin-bottom: 30px;">
+                    Pojawiła się nowa informacja dotycząca Twojej obserwowanej spółki:<br><br>
+                    <strong>{{tytul}}</strong>
+                </p>
+                <div style="text-align: center;">
+                    <a href="{{link}}" style="background-color: #06c; color: white; padding: 10px 22px; text-decoration: none; border-radius: 8px; font-size: 14px; font-weight: 600; display: inline-block;">
+                        Dowiedz się więcej >
                     </a>
                 </div>
             </div>
+            <div style="background-color: #fbfbfd; color: #86868b; padding: 20px 40px; text-align: center; font-size: 12px; border-top: 1px solid #d2d2d7;">
+                <p style="margin: 0;">Źródło: Bankier.pl | System Automatyczny</p>
+            </div>
         </div>
-    </body>
-    </html>
-    """
-    
-    # Wstrzykujemy dane do szablonu (bezpieczniejsza metoda formatowania)
-    html_final = html_template.format(spolka=spolka, tytul=tytul, link=link_raportu)
+    </div>
+</body>
+</html>
+"""
+
+def wyslij_mail(spolka, tytul, link_raportu):
+    msg = MIMEMultipart('alternative')
+    msg['Subject'] = f"INFO: Nowy raport dla spółki {spolka}"
+    msg['From'] = f"Monitor Finansowy <{EMAIL_USER}>"
+    msg['To'] = EMAIL_USER
+
+    # Wstawianie danych do szablonu w bezpieczny sposób
+    html_final = HTML_TEMPLATE.replace("{{spolka}}", spolka).replace("{{tytul}}", tytul).replace("{{link}}", link_raportu)
 
     part_html = MIMEText(html_final, 'html', 'utf-8')
     msg.attach(part_html)
@@ -50,14 +57,14 @@ def wyslij_mail(spolka, tytul, link_raportu):
         with smtplib.SMTP_SSL('smtp.poczta.onet.pl', 465) as server:
             server.login(EMAIL_USER, EMAIL_PASS)
             server.send_message(msg)
-        print(f">>> Sukces: {spolka}")
+        print(f">>> Wysłano: {spolka}")
     except Exception as e:
-        print(f">>> Błąd: {e}")
+        print(f">>> Błąd wysyłki: {e}")
 
 def monitoruj():
-    print("Sprawdzanie Bankiera...")
+    print("Skanowanie wiadomości...")
     try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+        headers = {'User-Agent': 'Mozilla/5.0'}
         response = requests.get(URL_ZRODLO, headers=headers)
         response.encoding = 'utf-8'
         soup = BeautifulSoup(response.text, 'html.parser')
