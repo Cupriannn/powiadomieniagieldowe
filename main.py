@@ -6,7 +6,7 @@ from email.mime.text import MIMEText
 
 # --- KONFIGURACJA ---
 # Skrypt monitoruje teraz strumień wiadomości (raporty ESPI + newsy redakcyjne)
-OBSERWOWANE = ["KGHM", "CD PROJEKT", "SYNEKTIK", "ORLEN", "BUDIMEX"]
+OBSERWOWANE = ["KGHM", "CD PROJEKT", "SYNEKTIK", "ORLEN"]
 URL_ZRODLO = "https://www.bankier.pl/gielda/wiadomosci/wiadomosci-ze-spolek"
 BASE_URL = "https://www.bankier.pl"
 
