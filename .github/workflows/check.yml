@@ -1,31 +1,33 @@
-name: Sprawdz Raporty
+name: Globalny Asystent Gieldowy
+
+# Definiujemy, kiedy skrypt ma się uruchamiać
 on:
   schedule:
-    - cron: '*/15 * * * *' # Co 15 minut
+    - cron: '0 * * * *'
   workflow_dispatch:
 
 jobs:
-  build:
+  uruchom-skrypt:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write # Uprawnienia do zapisu history.txt
+
     steps:
-      - uses: actions/checkout@v4 # Zaktualizowano z v3/v4 na v4 (najnowsza)
-      - name: Setup Python
-        uses: actions/setup-python@v5 # Zaktualizowano z v4 na v5 (najnowsza)
-        with:
+    - name: Pobranie kodu z repozytorium
+      uses: actions/checkout@v4
+
+    - name: Konfiguracja Pythona
+      uses: actions/setup-python@v5
+      with:
           python-version: '3.11'
-      - name: Install dependencies
-        run: pip install requests beautifulsoup4
-      - name: Run script
-        env:
-          EMAIL_USER: ${{ secrets.EMAIL_USER }}
-          EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
-        run: python main.py
-      - name: Commit changes
-        run: |
-          git config --global user.name 'GitHub Action'
-          git config --global user.email 'action@github.com'
-          git add history.txt
-          git commit -m "Update history" || exit 0
-          git push
+
+
+    - name: Instalacja wymaganych bibliotek
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests
+
+    - name: Uruchomienie monitoringu gieldy
+      env:
+        GOOGLE_SHEETS_CSV_URL: ${{ secrets.GOOGLE_SHEETS_CSV_URL }}
+        FINNHUB_TOKEN: ${{ secrets.FINNHUB_TOKEN }}
+        DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      run: python main.py
