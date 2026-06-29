@@ -5,22 +5,38 @@ import xml.etree.ElementTree as ET
 from io import StringIO
 from datetime import datetime, timedelta
 
-# --- KONFIGURACJA BEZPIECZEŃSTWA (Zmienne środowiskowe) ---
+# --- KONFIGURACJA BEZPIECZEŃSTWA ---
 GOOGLE_SHEETS_CSV_URL = os.environ.get("GOOGLE_SHEETS_CSV_URL")
 FINNHUB_TOKEN = os.environ.get("FINNHUB_TOKEN")
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 
-# Nagłówki HTTP, aby Yahoo Finance nie blokowało naszego skryptu
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
 }
+
+# Nazwa pliku, w którym bot będzie przechowywał pamięć o wysłanych newsach
+PLIK_STANU = "wyslane.txt"
+
+
+def wczytaj_wyslane():
+    """Wczytuje z pliku listę linków, które już zostały wysłane na Discorda."""
+    if os.path.exists(PLIK_STANU):
+        with open(PLIK_STANU, "r", encoding="utf-8") as f:
+            return set(linia.strip() for linia in f if linia.strip())
+    return set()
+
+
+def zapisz_wyslane(wyslane_linki):
+    """Zapisuje zaktualizowaną listę linków do pliku tekstowego."""
+    with open(PLIK_STANU, "w", encoding="utf-8") as f:
+        for link in wyslane_linki:
+            f.write(f"{link}\n")
 
 
 def pobierz_i_skonfiguruj_uzytkownikow():
     if not GOOGLE_SHEETS_CSV_URL:
         print("BŁĄD: Brak zmiennej GOOGLE_SHEETS_CSV_URL!")
         return {}
-        
     try:
         response = requests.get(GOOGLE_SHEETS_CSV_URL)
         response.encoding = 'utf-8'
@@ -47,7 +63,6 @@ def pobierz_i_skonfiguruj_uzytkownikow():
 
 
 def pobierz_newsy_usa(ticker):
-    """Silnik podstawowy (Finnhub API) dla rynku amerykańskiego."""
     if not FINNHUB_TOKEN:
         return []
     today = datetime.now().strftime('%Y-%m-%d')
@@ -59,21 +74,16 @@ def pobierz_newsy_usa(ticker):
             return response.json()
         return []
     except Exception as e:
-        print(f"Błąd Finnhub dla {ticker}: {e}")
         return []
 
 
 def pobierz_newsy_gpw(ticker):
-    """Silnik awaryjny (Yahoo RSS Fallback) dla Giełdy w Warszawie."""
-    print(f"-> Finnhub brak danych dla {ticker}. Odpalanie silnika GPW (Yahoo RSS)...")
-    # Yahoo Finance oznacza GPW przy pomocy końcówki .WA (np. CDR.WA, KGH.WA)
     url = f"https://finance.yahoo.com/rss/headline?s={ticker}.WA"
     try:
         response = requests.get(url, headers=HEADERS)
         if response.status_code != 200:
             return None
             
-        # Parsujemy surowy plik XML ze struktury RSS kanału Yahoo
         root = ET.fromstring(response.content)
         items = root.findall('.//item')
         
@@ -102,7 +112,7 @@ def wyslij_na_discorda(discord_id, ticker, tytul, link, zrodlo):
             "title": f"Wiadomość z rynku dla: {ticker}",
             "description": tytul,
             "url": link,
-            "color": 15158332 if "GPW" in zrodlo else 3066993,  # Czerwony pasek dla Polski, zielony dla USA!
+            "color": 15158332 if "GPW" in zrodlo else 3066993,
             "footer": {
                 "text": f"System Monitoringu | Źródło: {zrodlo}"
             }
@@ -120,39 +130,53 @@ def monitoruj_gielde():
         print("Baza danych jest pusta lub brak konfiguracji.")
         return
 
+    # Wczytujemy historię wysłanych wiadomości
+    wyslane_szablony = wczytaj_wyslane()
+
     wszystkie_spolki = set()
     for lista_spolek in baza_iam.values():
         wszystkie_spolki.update(lista_spolek)
         
     print(f"Rozpoczynam skanowanie globalne dla: {list(wszystkie_spolki)}\n")
 
+    nowo_wyslane = False
+
     for ticker in wszystkie_spolki:
-        # Krok 1: Próbujemy pobrać dane z USA (Finnhub)
         newsy = pobierz_newsy_usa(ticker)
-        
         tytul, link, zrodlo = None, None, None
         
         if newsy:
-            # Sukces - to spółka z USA
             najnowszy = newsy[0]
             tytul = najnowszy.get('headline')
             link = najnowszy.get('url')
             zrodlo = f"Finnhub API ({najnowszy.get('source', 'Wiadomości')})"
         else:
-            # Krok 2: Fallback do silnika GPW
             news_gpw = pobierz_newsy_gpw(ticker)
             if news_gpw:
                 tytul = news_gpw['headline']
                 link = news_gpw['url']
                 zrodlo = news_gpw['source']
         
-        # Jeśli którykolwiek silnik zwrócił wiadomość, mapujemy uprawnienia i wysyłamy
         if tytul and link:
+            # --- KLUCZOWY FILTR ANTYSAMOWY ---
+            if link in wyslane_szablony:
+                print(f"-> Wiadomość dla {ticker} była już wysłana w przeszłości. Pomijam.")
+                continue
+                
+            # Jeśli linku nie ma w pliku, wysyłamy i dodajemy do pamięci bota
             for discord_id, subskrybowane_spolki in baza_iam.items():
                 if ticker in subskrybowane_spolki:
                     wyslij_na_discorda(discord_id, ticker, tytul, link, zrodlo)
+            
+            wyslane_szablony.add(link)
+            nowo_wyslane = True
         else:
             print(f"Brak nowych wieści globalnych dla {ticker}.")
+
+    # Jeśli pojawiły się nowe wiadomości, zapisujemy zaktualizowaną listę do pliku stanu
+    if nowo_wyslane:
+        zapisz_wyslane(wyslane_szablony)
+        print("\nZaktualizowano rejestr wysłanych wiadomości.")
 
 
 if __name__ == "__main__":
