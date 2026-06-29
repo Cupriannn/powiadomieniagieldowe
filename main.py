@@ -1,100 +1,159 @@
-import requests
-from bs4 import BeautifulSoup
-import smtplib
 import os
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+import requests
+import csv
+import xml.etree.ElementTree as ET
+from io import StringIO
+from datetime import datetime, timedelta
 
-# --- KONFIGURACJA ---
-OBSERWOWANE = ["KGHM", "CD PROJEKT", "SYNEKTIK", "ORLEN", "BUDIMEX"]
-URL_ZRODLO = "https://www.bankier.pl/gielda/wiadomosci/wiadomosci-ze-spolek"
-BASE_URL = "https://www.bankier.pl"
+# --- KONFIGURACJA BEZPIECZEŃSTWA (Zmienne środowiskowe) ---
+GOOGLE_SHEETS_CSV_URL = os.environ.get("GOOGLE_SHEETS_CSV_URL")
+FINNHUB_TOKEN = os.environ.get("FINNHUB_TOKEN")
+DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 
-EMAIL_USER = os.environ.get('EMAIL_USER')
-EMAIL_PASS = os.environ.get('EMAIL_PASS')
+# Nagłówki HTTP, aby Yahoo Finance nie blokowało naszego skryptu
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+}
 
-# Szablon HTML (Zdefiniowany jako zwykły tekst, aby nie psuć kolorowania)
-HTML_TEMPLATE = """
-<html>
-<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f5f5f7; color: #1d1d1f; margin: 0; padding: 0;">
-    <div style="width: 100%; padding: 40px 0;">
-        <div style="max-width: 500px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
-            <div style="padding: 40px;">
-                <p style="font-size: 14px; font-weight: 500; color: #06c; margin-bottom: 8px;">Monitor Giełdowy | Powiadomienie</p>
-                <h2 style="font-size: 24px; font-weight: 700; color: #1d1d1f; margin-top: 0; margin-bottom: 24px; line-height: 1.2;">{{spolka}}</h2>
-                <p style="font-size: 16px; color: #515154; line-height: 1.6; margin-bottom: 30px;">
-                    Pojawiła się nowa informacja dotycząca Twojej obserwowanej spółki:<br><br>
-                    <strong>{{tytul}}</strong>
-                </p>
-                <div style="text-align: center;">
-                    <a href="{{link}}" style="background-color: #06c; color: white; padding: 10px 22px; text-decoration: none; border-radius: 8px; font-size: 14px; font-weight: 600; display: inline-block;">
-                        Dowiedz się więcej >
-                    </a>
-                </div>
-            </div>
-            <div style="background-color: #fbfbfd; color: #86868b; padding: 20px 40px; text-align: center; font-size: 12px; border-top: 1px solid #d2d2d7;">
-                <p style="margin: 0;">Źródło: Bankier.pl | System Automatyczny</p>
-            </div>
-        </div>
-    </div>
-</body>
-</html>
-"""
 
-def wyslij_mail(spolka, tytul, link_raportu):
-    msg = MIMEMultipart('alternative')
-    msg['Subject'] = f"INFO: Nowy raport dla spółki {spolka}"
-    msg['From'] = f"Monitor Finansowy <{EMAIL_USER}>"
-    msg['To'] = EMAIL_USER
-
-    # Wstawianie danych do szablonu w bezpieczny sposób
-    html_final = HTML_TEMPLATE.replace("{{spolka}}", spolka).replace("{{tytul}}", tytul).replace("{{link}}", link_raportu)
-
-    part_html = MIMEText(html_final, 'html', 'utf-8')
-    msg.attach(part_html)
-
+def pobierz_i_skonfiguruj_uzytkownikow():
+    if not GOOGLE_SHEETS_CSV_URL:
+        print("BŁĄD: Brak zmiennej GOOGLE_SHEETS_CSV_URL!")
+        return {}
+        
     try:
-        with smtplib.SMTP_SSL('smtp.poczta.onet.pl', 465) as server:
-            server.login(EMAIL_USER, EMAIL_PASS)
-            server.send_message(msg)
-        print(f">>> Wysłano: {spolka}")
-    except Exception as e:
-        print(f">>> Błąd wysyłki: {e}")
-
-def monitoruj():
-    print("Skanowanie wiadomości...")
-    try:
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        response = requests.get(URL_ZRODLO, headers=headers)
+        response = requests.get(GOOGLE_SHEETS_CSV_URL)
         response.encoding = 'utf-8'
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        wpisy = soup.find_all('a')
-        
-        history_file = "history.txt"
-        if not os.path.exists(history_file):
-            open(history_file, 'w', encoding='utf-8').close()
-        
-        with open(history_file, 'r', encoding='utf-8') as f:
-            wyslane = f.read().splitlines()
+        if response.status_code != 200:
+            return {}
 
-        for wpis in wpisy:
-            tytul = wpis.get_text().strip()
-            link_rel = wpis.get('href', '')
-            
-            if len(tytul) < 15 or "/wiadomosc/" not in link_rel:
+        f = StringIO(response.text)
+        reader = csv.reader(f)
+        next(reader)
+        
+        uzytkownicy_i_spolki = {}
+        for wiersz in reader:
+            if len(wiersz) < 3:
                 continue
-                
-            tytul_up = tytul.upper()
-            for spolka in OBSERWOWANE:
-                if spolka in tytul_up and tytul not in wyslane:
-                    pelny_link = BASE_URL + link_rel if link_rel.startswith('/') else link_rel
-                    wyslij_mail(spolka, tytul, pelny_link)
-                    with open(history_file, 'a', encoding='utf-8') as f:
-                        f.write(tytul + "\n")
-                    break 
+            discord_id = wiersz[1].strip()
+            surowe_spolki = wiersz[2]
+            lista_spolek = [spolka.strip().upper() for spolka in surowe_spolki.split(",") if spolka.strip()]
+            uzytkownicy_i_spolki[discord_id] = lista_spolek
+            
+        return uzytkownicy_i_spolki
     except Exception as e:
-        print(f"Błąd: {e}")
+        print(f"Błąd bazy danych: {e}")
+        return {}
+
+
+def pobierz_newsy_usa(ticker):
+    """Silnik podstawowy (Finnhub API) dla rynku amerykańskiego."""
+    if not FINNHUB_TOKEN:
+        return []
+    today = datetime.now().strftime('%Y-%m-%d')
+    yesterday = (datetime.now() - timedelta(days=2)).strftime('%Y-%m-%d')
+    url = f"https://finnhub.io/api/v1/company-news?symbol={ticker}&from={yesterday}&to={today}&token={FINNHUB_TOKEN}"
+    try:
+        response = requests.get(url)
+        if response.status_code == 200:
+            return response.json()
+        return []
+    except Exception as e:
+        print(f"Błąd Finnhub dla {ticker}: {e}")
+        return []
+
+
+def pobierz_newsy_gpw(ticker):
+    """Silnik awaryjny (Yahoo RSS Fallback) dla Giełdy w Warszawie."""
+    print(f"-> Finnhub brak danych dla {ticker}. Odpalanie silnika GPW (Yahoo RSS)...")
+    # Yahoo Finance oznacza GPW przy pomocy końcówki .WA (np. CDR.WA, KGH.WA)
+    url = f"https://finance.yahoo.com/rss/headline?s={ticker}.WA"
+    try:
+        response = requests.get(url, headers=HEADERS)
+        if response.status_code != 200:
+            return None
+            
+        # Parsujemy surowy plik XML ze struktury RSS kanału Yahoo
+        root = ET.fromstring(response.content)
+        items = root.findall('.//item')
+        
+        if items:
+            pierwszy = items[0]
+            return {
+                'headline': pierwszy.find('title').text,
+                'url': pierwszy.find('link').text,
+                'source': 'Yahoo Finance (GPW)'
+            }
+        return None
+    except Exception as e:
+        print(f"Błąd silnika GPW dla {ticker}: {e}")
+        return None
+
+
+def wyslij_na_discorda(discord_id, ticker, tytul, link, zrodlo):
+    if not DISCORD_WEBHOOK_URL:
+        return
+        
+    payload = {
+        "username": "Asystent Giełdowy IAM",
+        "avatar_url": "https://cdn-icons-png.flaticon.com/512/2704/2704332.png",
+        "content": f"🚨 **Nowy raport dla Twojej spółki!** <@{discord_id}>",
+        "embeds": [{
+            "title": f"Wiadomość z rynku dla: {ticker}",
+            "description": tytul,
+            "url": link,
+            "color": 15158332 if "GPW" in zrodlo else 3066993,  # Czerwony pasek dla Polski, zielony dla USA!
+            "footer": {
+                "text": f"System Monitoringu | Źródło: {zrodlo}"
+            }
+        }]
+    }
+    try:
+        requests.post(DISCORD_WEBHOOK_URL, json=payload)
+    except Exception as e:
+        print(f"Błąd Discorda: {e}")
+
+
+def monitoruj_gielde():
+    baza_iam = pobierz_i_skonfiguruj_uzytkownikow()
+    if not baza_iam:
+        print("Baza danych jest pusta lub brak konfiguracji.")
+        return
+
+    wszystkie_spolki = set()
+    for lista_spolek in baza_iam.values():
+        wszystkie_spolki.update(lista_spolek)
+        
+    print(f"Rozpoczynam skanowanie globalne dla: {list(wszystkie_spolki)}\n")
+
+    for ticker in wszystkie_spolki:
+        # Krok 1: Próbujemy pobrać dane z USA (Finnhub)
+        newsy = pobierz_newsy_usa(ticker)
+        
+        tytul, link, zrodlo = None, None, None
+        
+        if newsy:
+            # Sukces - to spółka z USA
+            najnowszy = newsy[0]
+            tytul = najnowszy.get('headline')
+            link = najnowszy.get('url')
+            zrodlo = f"Finnhub API ({najnowszy.get('source', 'Wiadomości')})"
+        else:
+            # Krok 2: Fallback do silnika GPW
+            news_gpw = pobierz_newsy_gpw(ticker)
+            if news_gpw:
+                tytul = news_gpw['headline']
+                link = news_gpw['url']
+                zrodlo = news_gpw['source']
+        
+        # Jeśli którykolwiek silnik zwrócił wiadomość, mapujemy uprawnienia i wysyłamy
+        if tytul and link:
+            for discord_id, subskrybowane_spolki in baza_iam.items():
+                if ticker in subskrybowane_spolki:
+                    wyslij_na_discorda(discord_id, ticker, tytul, link, zrodlo)
+        else:
+            print(f"Brak nowych wieści globalnych dla {ticker}.")
+
 
 if __name__ == "__main__":
-    monitoruj()
+    monitoruj_gielde()
