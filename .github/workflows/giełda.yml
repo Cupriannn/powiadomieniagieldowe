@@ -1,10 +1,13 @@
 name: Globalny Asystent Gieldowy
 
-# Definiujemy, kiedy skrypt ma się uruchamiać
 on:
   schedule:
-    - cron: '0 * * * *'
-  workflow_dispatch:
+    - cron: '0 * * * *' # Odpalanie co 60 minut
+  workflow_dispatch: # Możliwość ręcznego odpalenia
+
+# DAJEMY SERWEROWI UPRAWNIENIA DO ZAPISU W REPOZYTORIUM
+permissions:
+  contents: write
 
 jobs:
   uruchom-skrypt:
@@ -19,15 +22,28 @@ jobs:
       with:
           python-version: '3.11'
 
-
     - name: Instalacja wymaganych bibliotek
       run: |
         python -m pip install --upgrade pip
         pip install requests
 
-    - name: Uruchomienie monitoringu gieldy
+    - name: Uruchomienie monitoring gieldy
       env:
         GOOGLE_SHEETS_CSV_URL: ${{ secrets.GOOGLE_SHEETS_CSV_URL }}
         FINNHUB_TOKEN: ${{ secrets.FINNHUB_TOKEN }}
         DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
       run: python main.py
+
+    # NOWY KROK: Serwer zapisuje plik tekstowy z powrotem na Twoim GitHubie
+    - name: Automatyczne zapisanie stanu bazy (wyslane.txt) w repozytorium
+      run: |
+        git config --global user.name "Asystent Gieldowy Bot"
+        git config --global user.email "actions@github.com"
+        
+        # Tworzymy plik jeśli nie istniał, żeby git go zauważył
+        touch wyslane.txt
+        git add wyslane.txt
+        
+        # Commit i push nastąpi tylko wtedy, gdy w pliku dopisano nowe linki 
+        # (zapobiega to wywalaniu błędów, gdy na giełdzie nie ma nowych newsów)
+        git diff --quiet && git diff --staged --quiet || (git commit -m "Aktualizacja bazy wysłanych wiadomości [skip ci]" && git push)
